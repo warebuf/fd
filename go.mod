@@ -1,4 +1,4 @@
-module test_server3
+module fd
 
 go 1.20
 

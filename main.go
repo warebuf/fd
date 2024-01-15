@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/gorilla/pat"
 	"github.com/gorilla/sessions"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
@@ -16,19 +15,13 @@ import (
 
 func indexHandler(res http.ResponseWriter, req *http.Request) {
 	log.Println("/")
-	t := template.Must(template.ParseFiles(filepath.Join("serving-files", "index.html")))
+	t := template.Must(template.ParseFiles(filepath.Join("static", "index.html")))
 	t.Execute(res, req)
 }
 
-// this code is imperfect, do not put too much emphasis in understanding it rn
-// all you need to understand is gothic.BeginAuthHandler() redirects the user to Google to get authenticated
 func authHandler(res http.ResponseWriter, req *http.Request) {
 	fmt.Println("provider")
 
-	// Check if user already has a valid session going,
-	// if the session is invalid => send them a page that tells them their session is invalid (could instead sent them to the homepage OR Google auth)
-	// if the session is valid => refer them to the userpage (not working rn)
-	// if they have no session => refer them to google to get authenicated
 	session, err := store.Get(req, "session-name")
 	fmt.Println(session)
 	if err != nil {
@@ -50,7 +43,7 @@ func googleHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	t := template.Must(template.ParseFiles(filepath.Join("serving-files", "user.html")))
+	t := template.Must(template.ParseFiles(filepath.Join("static", "user.html")))
 
 	session, err := store.Get(req, "session-name")
 	if err != nil {
@@ -101,7 +94,7 @@ func chatHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
-		t := template.Must(template.ParseFiles(filepath.Join("serving-files", "chat.html")))
+		t := template.Must(template.ParseFiles(filepath.Join("static", "chat.html")))
 		t.Execute(res, req)
 	} else {
 		//fmt.Println("User is not authenticated, redirecting to home page")
@@ -123,7 +116,23 @@ func roomHandler(res http.ResponseWriter, req *http.Request) {
 }
 
 func gameHandler(res http.ResponseWriter, req *http.Request) {
-	res.Write([]byte("gamer"))
+	c, _ := req.Cookie("session-name")
+	fmt.Printf("%+v", c)
+
+	// Check if user is already authenticated
+	session, err := store.Get(req, "session-name")
+	fmt.Println(session)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
+		t := template.Must(template.ParseFiles(filepath.Join("static", "game.html")))
+		t.Execute(res, req)
+	} else {
+		fmt.Println("User is not authenticated, redirecting to home page")
+		http.Redirect(res, req, "/", http.StatusSeeOther)
+	}
 }
 
 // global variables
@@ -134,8 +143,8 @@ var port string
 func main() {
 
 	// init
-	//goth.UseProviders(google.New("676118167957-4bpa000p9bfaf5vu6halmen6nfjnuo1r.apps.googleusercontent.com", "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", "https://testfdfdfdfd-f824fe0fe06f.herokuapp.com/auth/google/callback"))
-	goth.UseProviders(google.New("676118167957-4bpa000p9bfaf5vu6halmen6nfjnuo1r.apps.googleusercontent.com", "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", "http://localhost:3000/auth/google/callback"))
+	//goth.UseProviders(google.New("676118167957-4bpa000p9bfaf5vu6halmen6nfjnuo1r.apps.googleusercontent.com", "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", "https://testfdfdfdfd-f824fe0fe06f.herokuapp.com/callback"))
+	goth.UseProviders(google.New("676118167957-4bpa000p9bfaf5vu6halmen6nfjnuo1r.apps.googleusercontent.com", "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", "http://localhost:3000/callback"))
 	secret_key := []byte("secret-password") // used to encrypt cookies, have to use a stronger password, but used a simple one for illustration purposes
 	store = sessions.NewCookieStore(secret_key)
 	store.Options.HttpOnly = true // just to make sure javascript doesn't access cookies
@@ -147,21 +156,23 @@ func main() {
 	r := newRoom()
 	listOfRooms = append(listOfRooms, r)
 
-	// this library requires us to go from more specific to less specific
-	p := pat.New()
+	mux := http.NewServeMux() // create the default multiplexer
+	fs := http.FileServer(http.Dir("./static"))
+	mux.Handle("/static/", http.StripPrefix("/static/", fs))
 
-	p.Get("/logout/google", logoutHandler)
-	p.Get("/chat", chatHandler)
-	p.Get("/success", successHandler)
-	p.Get("/auth/google/callback", googleHandler)
-	p.Get("/auth/{provider}", authHandler)
-	p.Get("/room", roomHandler)
-	p.Get("/game", gameHandler)
-	p.Get("/", indexHandler)
+	mux.HandleFunc("/logout/google", logoutHandler)
+	mux.HandleFunc("/chat", chatHandler)
+	mux.HandleFunc("/success", successHandler)
+	mux.HandleFunc("/callback", googleHandler)
+	mux.HandleFunc("/login", authHandler)
+	mux.HandleFunc("/room", roomHandler)
+	mux.HandleFunc("/game", gameHandler)
+	mux.HandleFunc("/", indexHandler)
 
 	go r.run()
 
 	// run the server
 	log.Println("listening on localhost:" + port)
-	log.Fatal(http.ListenAndServe(":"+port, p))
+	//log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
