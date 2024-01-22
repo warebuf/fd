@@ -6,20 +6,23 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/sessions"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/markbates/goth/providers/google"
+
+	"github.com/gorilla/websocket"
 )
 
 func indexHandler(res http.ResponseWriter, req *http.Request) {
 	log.Println("/")
 	t := template.Must(template.ParseFiles(filepath.Join("static", "index.html")))
-	t.Execute(res, req)
+	t.Execute(res, nil)
 }
 
-func authHandler(res http.ResponseWriter, req *http.Request) {
+func loginHandler(res http.ResponseWriter, req *http.Request) {
 	fmt.Println("provider")
 
 	session, err := store.Get(req, "session-name")
@@ -29,19 +32,23 @@ func authHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
-		res.Write([]byte("we would've sent your user info here, but we didn't save it sorry"))
+		res.Write([]byte("we aren't saving your data rn, sorry"))
 	} else {
 		gothic.BeginAuthHandler(res, req)
 	}
 }
 
-func googleHandler(res http.ResponseWriter, req *http.Request) {
+func callbackHandler(res http.ResponseWriter, req *http.Request) {
+
+	fmt.Printf("%+v\n", req)
 
 	user, err := gothic.CompleteUserAuth(res, req)
 	if err != nil {
 		fmt.Fprintln(res, err)
 		return
 	}
+
+	fmt.Printf("%+v\n", user)
 
 	t := template.Must(template.ParseFiles(filepath.Join("static", "user.html")))
 
@@ -53,10 +60,32 @@ func googleHandler(res http.ResponseWriter, req *http.Request) {
 	session.Values["Email"] = user.Email
 	session.Values["authenticated"] = true
 
+	// add the changes to the cookie
 	err = session.Save(req, res)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// getting the cookie we are going to send
+	// then creating an user_info struct for that cookie
+	all_cookies := res.Header().Values("Set-Cookie")
+	for i := 0; i < len(all_cookies); i++ { // potential vulnerability here b/c of semicolon
+		stringSlice := strings.Split(all_cookies[i], ";")
+		for j := 0; j < len(stringSlice); j++ {
+			if len(stringSlice[j]) >= 13 { // potential vulnerability here b/c we are identifying cookie by first 13 characters (ie could make a fake cookie named session-name=2)
+				if stringSlice[j][0:13] == "session-name=" {
+					cookie_to_user_info[stringSlice[j][13:]] = &user_info{
+						uid:           uid_count,
+						email:         user.Email,
+						nickname:      "bob",
+						chat_history:  make(map[int]chan *message),
+						current_rooms: make(map[int]*room),
+					}
+					uid_count++
+				}
+			}
+		}
 	}
 
 	t.Execute(res, user)
@@ -75,7 +104,7 @@ func successHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
-		res.Write([]byte("hi"))
+		res.Write([]byte("hi " + session.Values["Email"].(string)))
 	} else {
 		//fmt.Println("User is not authenticated, redirecting to home page")
 		http.Redirect(res, req, "/", http.StatusSeeOther)
@@ -95,7 +124,10 @@ func chatHandler(res http.ResponseWriter, req *http.Request) {
 	}
 	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
 		t := template.Must(template.ParseFiles(filepath.Join("static", "chat.html")))
-		t.Execute(res, req)
+		fmt.Printf("%+v\n", req.Host)
+		fmt.Printf("%+v\n", session.Values["Email"].(string))
+		data := map[string]string{"email": session.Values["Email"].(string), "host": req.Host}
+		t.Execute(res, data)
 	} else {
 		//fmt.Println("User is not authenticated, redirecting to home page")
 		http.Redirect(res, req, "/", http.StatusSeeOther)
@@ -112,7 +144,10 @@ func logoutHandler(res http.ResponseWriter, req *http.Request) {
 
 func roomHandler(res http.ResponseWriter, req *http.Request) {
 	log.Println("room")
-	listOfRooms[0].ServeHTTP(res, req)
+
+	// implement
+
+	active_rooms[0].ServeHTTP(res, req)
 }
 
 func gameHandler(res http.ResponseWriter, req *http.Request) {
@@ -136,11 +171,29 @@ func gameHandler(res http.ResponseWriter, req *http.Request) {
 }
 
 // global variables
-var store *sessions.CookieStore
-var listOfRooms []*room
+var store *sessions.CookieStore // used to create and decrypt cookies
+var active_rooms []*room
 var port string
 
+var uid_count = 0                             // used to assign a user id
+var cookie_to_user_info map[string]*user_info // TODO: this might be vulnerable
+var rid_count = 0                             // room id
+
+type user_info struct {
+	uid      int
+	email    string
+	nickname string
+
+	// chat related stuff
+	socket        *websocket.Conn       // socket is the web socket for this client.
+	chat_history  map[int]chan *message // send is a channel on which messages are sent.
+	current_rooms map[int]*room         // rid to room
+}
+
 func main() {
+
+	// init
+	cookie_to_user_info = make(map[string]*user_info)
 
 	// init
 	//goth.UseProviders(google.New("676118167957-4bpa000p9bfaf5vu6halmen6nfjnuo1r.apps.googleusercontent.com", "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", "https://testfdfdfdfd-f824fe0fe06f.herokuapp.com/callback"))
@@ -154,7 +207,7 @@ func main() {
 
 	// create a room for users to chat in
 	r := newRoom()
-	listOfRooms = append(listOfRooms, r)
+	active_rooms = append(active_rooms, r)
 
 	mux := http.NewServeMux() // create the default multiplexer
 	fs := http.FileServer(http.Dir("./static"))
@@ -163,8 +216,8 @@ func main() {
 	mux.HandleFunc("/logout/google", logoutHandler)
 	mux.HandleFunc("/chat", chatHandler)
 	mux.HandleFunc("/success", successHandler)
-	mux.HandleFunc("/callback", googleHandler)
-	mux.HandleFunc("/login", authHandler)
+	mux.HandleFunc("/callback", callbackHandler)
+	mux.HandleFunc("/login", loginHandler)
 	mux.HandleFunc("/room", roomHandler)
 	mux.HandleFunc("/game", gameHandler)
 	mux.HandleFunc("/", indexHandler)

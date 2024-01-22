@@ -4,29 +4,34 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// client represents a single chatting user.
-type client struct {
-	socket *websocket.Conn // socket is the web socket for this client.
-	send   chan []byte     // send is a channel on which messages are sent.
-	room   *room           // room is the room this client is chatting in.
-}
-
 // a room is a map of clients, as well as a queue of people wanting to join/leave
 type room struct {
-	forward chan []byte      // a channel is a thread-safe queue, incoming messages
-	join    chan *client     // a channel for clients wishing to join
-	leave   chan *client     // a channel for clients wishing to leave
-	clients map[*client]bool // all current clients
+	forward chan *message       // a channel is a thread-safe queue, incoming messages
+	join    chan *user_info     // a channel for clients wishing to join
+	leave   chan *user_info     // a channel for clients wishing to leave
+	clients map[*user_info]bool // all current clients
+
+	rid int
 }
 
-func (c *client) read() {
+type message struct {
+	Name    string
+	Message string
+	When    time.Time
+}
+
+func (c *user_info) read(rid int) {
 	for {
-		if _, msg, err := c.socket.ReadMessage(); err == nil {
-			c.room.forward <- msg
+		var msg *message
+		if err := c.socket.ReadJSON(&msg); err == nil {
+			msg.When = time.Now()
+			msg.Name = c.email
+			c.current_rooms[rid].forward <- msg
 		} else {
 			break
 		}
@@ -34,9 +39,10 @@ func (c *client) read() {
 	c.socket.Close()
 }
 
-func (c *client) write() {
-	for msg := range c.send {
-		if err := c.socket.WriteMessage(websocket.TextMessage, msg); err != nil {
+// will loop infinitely until channel is closed
+func (c *user_info) write(rid int) {
+	for msg := range c.chat_history[rid] {
+		if err := c.socket.WriteJSON(msg); err != nil {
 			break
 		}
 	}
@@ -52,14 +58,14 @@ func (r *room) run() {
 			r.clients[client] = true
 		case client := <-r.leave: // leaving
 			delete(r.clients, client)
-			close(client.send)
+			close(client.chat_history[r.rid])
 		case msg := <-r.forward: // forward message to all clients
 			for client := range r.clients {
 				select {
-				case client.send <- msg: // send the message
+				case client.chat_history[r.rid] <- msg: // send the message
 				default: // failed to send
 					delete(r.clients, client)
-					close(client.send)
+					close(client.chat_history[r.rid])
 				}
 			}
 		}
@@ -82,25 +88,30 @@ func (r *room) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		log.Fatal("ServeHTTP:", err)
 		return
 	}
-	client := &client{
-		socket: socket,
-		send:   make(chan []byte, messageBufferSize),
-		room:   r,
-	}
-	r.join <- client
+
+	c, _ := req.Cookie("session-name")
+	fmt.Printf("%+v\n", c.Value)
+
+	temp := cookie_to_user_info[c.Value]
+
+	temp.socket = socket
+	temp.chat_history[r.rid] = make(chan *message)
+	temp.current_rooms[r.rid] = r
+
+	r.join <- cookie_to_user_info[c.Value]
 	defer func() {
-		r.leave <- client
+		r.leave <- cookie_to_user_info[c.Value]
 		fmt.Println("client left the room")
 	}()
-	go client.write()
-	client.read()
+	go cookie_to_user_info[c.Value].write(r.rid)
+	cookie_to_user_info[c.Value].read(r.rid)
 }
 
 func newRoom() *room {
 	return &room{
-		forward: make(chan []byte),
-		join:    make(chan *client),
-		leave:   make(chan *client),
-		clients: make(map[*client]bool),
+		forward: make(chan *message),
+		join:    make(chan *user_info),
+		leave:   make(chan *user_info),
+		clients: make(map[*user_info]bool),
 	}
 }

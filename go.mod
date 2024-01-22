@@ -3,7 +3,6 @@ module fd
 go 1.20
 
 require (
-	github.com/gorilla/pat v0.0.0-20180118222023-199c85a7f6d1
 	github.com/gorilla/sessions v1.2.2
 	github.com/gorilla/websocket v1.5.1
 	github.com/markbates/goth v1.78.0
