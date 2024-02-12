@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>lobby</title>
+</head>
+<body>
+
+<p style="color:red;">{{.Room_error}}</p>
+
+<form action="/createRoom" method="get">
+    <p>Create: <input type="text" name="room_name"/><input type="submit"/></p>
+</form>
+
+<p>chat rooms:</p>
+
+<table>
+    {{range $index, $element := .Table}}
+    <tr>
+        <td>
+            {{$element}}
+            <button type="button" onclick="location.href='/deleteRoom?room_name={{$index}}';">Delete</button>
+            <button type="button" onclick=" window.open('/chat/{{$element}}','_blank')">Join</button>
+            {{$index}}
+        </td>
+    </tr>
+    {{end}}
+</table>
+
+</body>
+</html>
