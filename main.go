@@ -18,13 +18,13 @@ import (
 )
 
 func indexHandler(res http.ResponseWriter, req *http.Request) {
-	log.Println("/")
+	log.Println("serving index")
 	t := template.Must(template.ParseFiles(filepath.Join("static", "index.html")))
 	t.Execute(res, nil)
 }
 
 func loginHandler(res http.ResponseWriter, req *http.Request) {
-	fmt.Println("provider")
+	log.Println("serving login")
 
 	session, err := store.Get(req, "session-name")
 	fmt.Println("session values", session.Values)
@@ -41,6 +41,7 @@ func loginHandler(res http.ResponseWriter, req *http.Request) {
 }
 
 func callbackHandler(res http.ResponseWriter, req *http.Request) {
+	log.Println("serving callback")
 
 	user, err := gothic.CompleteUserAuth(res, req)
 	if err != nil {
@@ -57,7 +58,7 @@ func callbackHandler(res http.ResponseWriter, req *http.Request) {
 	}
 
 	not_assigned := true
-	var random_number uuid.UUID
+	var random_number uuid.UUIDd
 	for not_assigned {
 		random_number = uuid.New()
 		uid_to_user.mutex.Lock()
@@ -99,6 +100,8 @@ func callbackHandler(res http.ResponseWriter, req *http.Request) {
 }
 
 func successHandler(res http.ResponseWriter, req *http.Request) {
+	log.Println("serving success")
+
 	// Check if user is already authenticated
 	session, err := store.Get(req, "session-name")
 	fmt.Println(session)
@@ -115,8 +118,8 @@ func successHandler(res http.ResponseWriter, req *http.Request) {
 }
 
 func chatHandler(res http.ResponseWriter, req *http.Request) {
+	log.Println("serving chat")
 
-	fmt.Println("entered chat")
 	// Check if user is already authenticated
 	session, err := store.Get(req, "session-name")
 	fmt.Printf("%+v\n", session)

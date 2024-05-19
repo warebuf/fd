@@ -129,23 +129,27 @@ func (r *room) run() {
 				}
 			}
 		case still_open := <-r.open:
-			fmt.Printf("hello?\n")
+			fmt.Printf("deleting this room\n")
 			// maybe should go through each user and delete
 			for i, j := range r.sockets {
 				uid_to_user.mutex.Lock()
-				close(j.chat_history[i])
-				delete(j.chat_history, i)
-				delete(j.sockets, i)
-				uid_to_user.mutex.Lock()
+				close(r.sockets[cid].chat_history[cid])
+				delete(r.sockets[cid].chat_history, cid)
+				delete(r.sockets[cid].sockets, cid)
+				uid_to_user.mutex.Unlock()
+				rid_to_room.mutex.Lock()
+				delete(r.sockets, cid)
+				rid_to_room.mutex.Unlock()
 			}
+			fmt.Printf("deleting this room2\n")
 			roomname_to_rid.mutex.Lock()
 			delete(roomname_to_rid.name_to_rid, r.room_name)
 			roomname_to_rid.mutex.Unlock()
-
+			fmt.Printf("deleting this room3\n")
 			rid_to_room.mutex.Lock()
 			delete(rid_to_room.rooms, r.rid)
 			rid_to_room.mutex.Unlock()
-
+			fmt.Printf("deleting this room4\n")
 			if still_open {
 				return
 			}
@@ -156,8 +160,8 @@ func (r *room) run() {
 
 func (c *user_info) read(socket *websocket.Conn) {
 	defer func() {
+		fmt.Printf("client left the room ", socket.NetConn())
 		c.sockets[socket].leave <- socket
-		fmt.Println("client left the room", socket.NetConn())
 	}()
 
 	for {
